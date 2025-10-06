@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>veNFT Recent Sales — WETH ≥ 0.01</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; background:#0e1116; color:#e8e8ea; }
+    h1 { margin: 0 0 12px; font-size: 22px; }
+    .muted { color:#a0a3a8; font-size: 12px; }
+    #status { margin: 8px 0 16px; font-size: 13px; color:#a0a3a8; }
+    ol { padding-left: 16px; }
+    li { margin: 8px 0; line-height: 1.35; }
+    code { background:#151a22; padding: 2px 6px; border-radius: 6px; }
+    a { color:#9cc7ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .badge { font-size: 11px; padding:2px 6px; border-radius: 6px; background:#1a2230; color:#cbd5e1; }
+  </style>
+</head>
+<body>
+  <h1>Recent Sales — <code>veABX NFTs</code></h1>
+  <div class="muted">
+    Filter: <span class="badge">payment.symbol = WETH</span>
+    <span class="badge">quantity ≥ 0.01 ETH</span>
+    <span class="badge">scans 200 most-recent</span>
+  </div>
+  <div id="status">Loading…</div>
+  <ol id="sales"></ol>
+
+<script>
+(async () => {
+  const OPENSEA_API_KEY = "YOUR_OPENSEA_API_KEY"; // ← put your OpenSea key here!!
+  const COLLECTION_SLUG = "venft-439026408";
+  const ETH_PRICE_API = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd";
+  const EVENTS_ENDPOINT_BASE = `https://api.opensea.io/api/v2/events/collection/${encodeURIComponent(COLLECTION_SLUG)}`;
+  const NFT_ENDPOINT_BASE = `https://api.opensea.io/api/v2/chain`;
+  const HEADERS = { "accept":"application/json", "x-api-key": OPENSEA_API_KEY };
+
+  const statusEl = document.getElementById("status");
+  const listEl = document.getElementById("sales");
+
+  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+
+  function formatUSD(x) {
+    if (!isFinite(x)) return "$–";
+    return x >= 1000 ? `$${x.toLocaleString(undefined, { maximumFractionDigits: 2 })}` 
+                     : `$${x.toFixed(2)}`;
+  }
+  function formatETH(x) {
+    return `${x.toFixed(4)} ETH`;
+  }
+  function safeNumber(val) {
+    if (val == null) return NaN;
+    if (typeof val === "number") return val;
+    const s = String(val).replace(/[^0-9.\-]/g, "");
+    const n = parseFloat(s);
+    return isNaN(n) ? NaN : n;
+  }
+
+  async function getEthUsd() {
+    const r = await fetch(ETH_PRICE_API);
+    if (!r.ok) throw new Error("Failed to get ETH price");
+    const j = await r.json();
+    return j?.ethereum?.usd ?? NaN;
+  }
+
+  async function fetchEventsPage({ cursor=null, limit=50 } = {}) {
+    const params = new URLSearchParams({ event_type: "sale", limit: String(limit) });
+    if (cursor) params.set("next", cursor);
+    const url = `${EVENTS_ENDPOINT_BASE}?${params.toString()}`;
+    const r = await fetch(url, { headers: HEADERS });
+    if (!r.ok) {
+      if ([429,500,502,503,504].includes(r.status)) await sleep(600);
+      throw new Error(`OpenSea events error ${r.status}`);
+    }
+    return r.json();
+  }
+
+  async function fetchNftTraits(chain, address, tokenId) {
+    const url = `${NFT_ENDPOINT_BASE}/${chain}/contract/${address}/nfts/${tokenId}`;
+    const r = await fetch(url, { headers: HEADERS });
+    if (!r.ok) throw new Error(`NFT fetch failed ${r.status}`);
+    const j = await r.json();
+    const traits = j?.nft?.traits ?? j?.traits ?? [];
+    return Array.isArray(traits) ? traits : [];
+  }
+  function extractTrait(traits, traitType) {
+    return traits.find(t => (t?.trait_type ?? t?.type) === traitType)?.value;
+  }
+
+  function eventField(e, path, fallback=null) {
+    return path.split(".").reduce((acc,key)=> (acc && acc[key] != null) ? acc[key] : null, e) ?? fallback;
+  }
+
+  try {
+    statusEl.textContent = "Fetching ETH price…";
+    const ethUsd = await getEthUsd();
+
+    statusEl.textContent = "Fetching recent sales from OpenSea (scanning up to 200)…";
+    const matches = [];
+    const scanned = [];
+    const MIN_WETH_WEI = 10n ** 16n; // 0.01 ETH
+    let cursor = null;
+    let examined = 0;
+
+    for (let pageNum = 0; pageNum < 4; pageNum++) {
+      const page = await fetchEventsPage({ cursor, limit: 50 });
+      const events = page?.asset_events ?? page?.events ?? [];
+      if (!Array.isArray(events) || events.length === 0) break;
+
+      for (const ev of events) {
+        examined++;
+        scanned.push(ev);
+
+        const payment = eventField(ev, "payment") || {};
+        const symbol = payment.symbol;
+        const quantityStr = payment.quantity;
+        const decimals = Number(payment.decimals ?? 18);
+
+        if (!quantityStr || typeof quantityStr !== "string") continue;
+
+        let pass = false;
+        try {
+          const qty = BigInt(quantityStr);
+          if (symbol === "ETH" && qty >= MIN_WETH_WEI) pass = true;
+        } catch (_) {
+        }
+        if (!pass) continue;
+
+        const saleEth = Number(BigInt(quantityStr)) / 10 ** decimals;
+        const saleUsd = saleEth * ethUsd;
+
+        const chain = eventField(ev, "chain");
+        const contract = eventField(ev, "nft.contract");
+        const tokenId = eventField(ev, "nft.identifier");
+        const permalink = eventField(ev, "nft.opensea_url") || (chain && contract && tokenId
+          ? `https://opensea.io/assets/${chain}/${contract}/${tokenId}` : "");
+
+        let lockedAbxVal = NaN;
+        try {
+          if (chain && contract && tokenId) {
+            const traits = await fetchNftTraits(chain, contract, tokenId);
+            lockedAbxVal = safeNumber(extractTrait(traits, "Locked ABX"));
+          }
+        } catch (_) {
+        }
+
+        const usdPerAbx = isFinite(lockedAbxVal) && lockedAbxVal > 0 ? (saleUsd / lockedAbxVal) : NaN;
+
+        matches.push({
+          when: eventField(ev, "event_timestamp") || eventField(ev, "closing_date") || 0,
+          saleEth, saleUsd,
+          lockedAbx: lockedAbxVal,
+          usdPerAbx,
+          permalink
+        });
+      }
+
+      cursor = page?.next ?? page?.next_cursor ?? null;
+      if (!cursor) break;
+    }
+
+    matches.sort((a,b) => Number(b.when) - Number(a.when));
+
+    listEl.innerHTML = "";
+    matches.forEach((r, i) => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <div class="row">
+          <span>Sale Price:</span>
+          <strong>${formatUSD(r.saleUsd)}</strong>
+          <span class="muted">(${formatETH(r.saleEth)})</span>
+          <span> | Locked ABX:</span>
+          <strong>${isFinite(r.lockedAbx) ? r.lockedAbx.toLocaleString() + " ABX" : "—"}</strong>
+          <span> | $/ABX:</span>
+          <strong>${isFinite(r.usdPerAbx) ? formatUSD(r.usdPerAbx) : "$–"}</strong>
+          ${r.permalink ? `<span class="muted"> — </span><a href="${r.permalink}" target="_blank" rel="noopener noreferrer">view NFT</a>` : ""}
+        </div>
+      `;
+      listEl.appendChild(li);
+    });
+
+    statusEl.textContent = `Scanned ${examined} sales (up to 200). Showing ${matches.length} matches · 1 WETH = ${formatUSD(ethUsd)}.`;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = `Error: ${err.message}`;
+  }
+})();
+</script>
+</body>
+</html>
