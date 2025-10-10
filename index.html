@@ -31,7 +31,7 @@
 <script>
 (async () => {
   const OPENSEA_API_KEY = "YOUR_OPENSEA_API_KEY"; // ← put your OpenSea key here!!
-  const COLLECTION_SLUG = "venft-439026408";
+  const COLLECTION_SLUG = "veabx";
   const ETH_PRICE_API = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd";
   const EVENTS_ENDPOINT_BASE = `https://api.opensea.io/api/v2/events/collection/${encodeURIComponent(COLLECTION_SLUG)}`;
   const NFT_ENDPOINT_BASE = `https://api.opensea.io/api/v2/chain`;
@@ -44,8 +44,8 @@
 
   function formatUSD(x) {
     if (!isFinite(x)) return "$–";
-    return x >= 1000 ? `$${x.toLocaleString(undefined, { maximumFractionDigits: 2 })}` 
-                     : `$${x.toFixed(2)}`;
+    return x >= 1000 ? `$${x.toLocaleString(undefined, { maximumFractionDigits: 3 })}` 
+                     : `$${x.toFixed(3)}`;
   }
   function formatETH(x) {
     return `${x.toFixed(4)} ETH`;
