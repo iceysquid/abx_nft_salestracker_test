@@ -6,3 +6,5 @@ Scans Opensea for recent veABX NFT sales >0.01eth and calculates the price per v
 2.) replace "YOUR_OPENSEA_API_KEY" with your Opensea API key.
 
 3.) open the file with your favorite browser. click refresh to refresh.
+
+commit test
